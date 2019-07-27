@@ -49,12 +49,15 @@ def _setup_logging() -> None:
 
 def _setup_uvloop() -> None:
     try:
+        import txaio
         import uvloop
     except ImportError:
         log.info("not using uvloop")
     else:
-        uvloop.install()
         log.info("using uvloop")
+        uvloop.install()
+        # update txaio loop because god knows they can't update it themselves
+        txaio.config.loop = asyncio.get_event_loop()
 
 
 def get_parser() -> argparse.ArgumentParser:
