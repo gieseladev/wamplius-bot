@@ -1,14 +1,12 @@
-from typing import Optional
-
 import konfi
-from .wamplius import ComponentConfig
+
+__all__ = ["Config", "load_config"]
 
 
 @konfi.template()
 class Config:
     command_prefix: str = ">"
-
-    component: Optional[ComponentConfig]
+    discord_token: str
 
 
 def load_config(path: str) -> Config:

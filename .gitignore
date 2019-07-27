@@ -1,4 +1,5 @@
 .idea/
+data/connections/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -10,6 +10,9 @@ discord-py = "*"
 autobahn = "*"
 cbor = "*"
 konfi = "*"
+uvloop = {markers = "sys_platform != 'win32'"}
+pyyaml = "*"
+wampli = "*"
 
 [requires]
 python_version = "3.7"

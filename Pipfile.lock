@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "de93275c816e4b6fe70a9f596de6017cbd83ad9e27fda97740cda3ccec26d6c1"
+            "sha256": "d60d2b5bd52ab5cd849f4cd36d25fe839898b2251e934bf68d5df87087ff2624"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -216,6 +216,7 @@
                 "sha256:ceacb9e5f8474dcf45b940578591c7f3d960e82f926c707788a570b51ba59190",
                 "sha256:fe6a88094b64132c4bb3b631412e90032e8cfe9745a58370462240b8cb7553cd"
             ],
+            "index": "pypi",
             "version": "==5.1.1"
         },
         "six": {
@@ -238,6 +239,30 @@
                 "sha256:b6b235d432cc58ffe111b43e337db71a5caa5d3eaa88f0eacf60b431c7626ef5"
             ],
             "version": "==18.8.1"
+        },
+        "uvloop": {
+            "hashes": [
+                "sha256:0fcd894f6fc3226a962ee7ad895c4f52e3f5c3c55098e21efb17c071849a0573",
+                "sha256:2f31de1742c059c96cb76b91c5275b22b22b965c886ee1fced093fa27dde9e64",
+                "sha256:459e4649fcd5ff719523de33964aa284898e55df62761e7773d088823ccbd3e0",
+                "sha256:67867aafd6e0bc2c30a079603a85d83b94f23c5593b3cc08ec7e58ac18bf48e5",
+                "sha256:8c200457e6847f28d8bb91c5e5039d301716f5f2fce25646f5fb3fd65eda4a26",
+                "sha256:958906b9ca39eb158414fbb7d6b8ef1b7aee4db5c8e8e5d00fcbb69a1ce9dca7",
+                "sha256:ac1dca3d8f3ef52806059e81042ee397ac939e5a86c8a3cea55d6b087db66115",
+                "sha256:b284c22d8938866318e3b9d178142b8be316c52d16fcfe1560685a686718a021",
+                "sha256:c48692bf4587ce281d641087658eca275a5ad3b63c78297bbded96570ae9ce8f",
+                "sha256:fefc3b2b947c99737c348887db2c32e539160dcbeb7af9aa6b53db7a283538fe"
+            ],
+            "index": "pypi",
+            "markers": "sys_platform != 'win32'",
+            "version": "==0.12.2"
+        },
+        "wampli": {
+            "hashes": [
+                "sha256:fa4506d8705647447a3755165ba8113821e4772327e2c144d35cd584a65fbd52"
+            ],
+            "index": "pypi",
+            "version": "==0.0.2"
         },
         "websockets": {
             "hashes": [

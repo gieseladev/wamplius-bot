@@ -2,9 +2,10 @@ def main() -> None:
     try:
         import wamplius.cli
     except ImportError:
-        import pathlib
         import sys
-        sys.path.append(str((pathlib.Path(__file__) / "../..").resolve()))
+        from os import path
+
+        sys.path.append(path.abspath(path.join(__file__, "../..")))
 
         import wamplius.cli
 
