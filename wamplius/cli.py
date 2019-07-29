@@ -29,6 +29,9 @@ def _setup_logging() -> None:
         },
 
         "loggers": {
+            "libwampli": {
+                "level": "DEBUG",
+            },
             "wamplius": {
                 "level": "DEBUG",
             },
@@ -76,8 +79,7 @@ def run(args: argparse.Namespace) -> None:
 
     config = wamplius.load_config(args.config)
 
-    loop = asyncio.get_event_loop()
-    bot = wamplius.create_bot(config, loop=loop)
+    bot = wamplius.create_bot(config)
 
     log.info("starting bot")
     bot.run(config.discord_token)

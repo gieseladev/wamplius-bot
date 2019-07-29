@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+import discord
 from discord.ext import commands
 
 from .cog import WampliusCog
@@ -24,8 +25,11 @@ def create_bot(config: Config, *,
         if isinstance(error, commands.CommandInvokeError):
             error = error.original
 
-        await ctx.send(f"Error: {error}")
+        embed = discord.Embed(title=type(error).__name__,
+                              description=str(error),
+                              colour=discord.Colour.red())
+        await ctx.send(embed=embed)
 
-    bot.add_cog(WampliusCog(bot, loop=loop))
+    bot.add_cog(WampliusCog(bot))
 
     return bot
