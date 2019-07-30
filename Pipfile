@@ -13,6 +13,7 @@ konfi = "*"
 uvloop = {markers = "sys_platform != 'win32'"}
 pyyaml = "*"
 wampli = "*"
+colorlog = "*"
 
 [requires]
 python_version = "3.7"

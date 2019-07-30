@@ -1,9 +1,12 @@
 import asyncio
 import atexit
+import contextlib
+import dataclasses
+import dbm
+import json
 import logging
 import pathlib
-import shelve
-from typing import Any, Dict
+from typing import Any, Dict, Iterator, MutableMapping, Optional
 
 import discord
 import libwampli
@@ -18,69 +21,133 @@ log = logging.getLogger(__name__)
 DB_PATH = pathlib.Path("data/connections/db")
 
 
+@dataclasses.dataclass()
+class DBItem:
+    wamp_config: Optional[libwampli.ConnectionConfig]
+    subscriptions: Dict[str, int]
+
+    @classmethod
+    def unmarshal_json(cls, data: str):
+        data = json.loads(data)
+        config = libwampli.ConnectionConfig(**data.pop("wamp_config"))
+        return cls(config, **data)
+
+    def as_dict(self) -> Dict[str, Any]:
+        data = {"subscriptions": self.subscriptions}
+
+        config = self.wamp_config
+        if config:
+            data["wamp_config"] = {
+                "realm": config.realm,
+                "transports": config.transports,
+            }
+
+        return data
+
+    def marshal_json(self) -> str:
+        return json.dumps(self.as_dict())
+
+
 class WampliusCog(commands.Cog, name="Wamplius"):
     bot: commands.Bot
 
     _connections: Dict[int, libwampli.Connection]
-    _channels: Dict[libwampli.Connection, Dict[str, discord.TextChannel]]
-    _conn_db: shelve.Shelf
+    _subscription_channels: Dict[int, Dict[str, discord.TextChannel]]
+    _db: MutableMapping[str, str]
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
         self._connections = {}
-        self._channels = {}
+        self._subscription_channels = {}
 
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            db = shelve.open(str(DB_PATH))
-        except Exception:
-            log.exception("couldn't open connection database, creating new one")
-            db = shelve.open(str(DB_PATH), "n")
 
-        self._conn_db = db
-        atexit.register(self._conn_db.close)
+        self._db = dbm.open(str(DB_PATH), flag="c")
+        # noinspection PyUnresolvedReferences
+        # because it's not truly a MutableMapping
+        atexit.register(self._db.close)
 
         try:
-            self.__load_connections_from_db()
+            self.__load_from_db()
         except Exception:
-            log.exception("couldn't load connections from database, resetting it")
-            self._conn_db.clear()
+            log.exception("couldn't load connections from database")
 
-    def __load_connections_from_db(self) -> None:
-        for conn_id, config in self._conn_db.items():
-            conn_id = int(conn_id)
+    def __load_from_db(self) -> None:
+        for raw_conn_id, raw_item in self._db.items():
+            item = DBItem.unmarshal_json(raw_item)
+            conn_id = int(raw_conn_id)
 
-            connection = libwampli.Connection(config)
-            self.__add_connection_listeners(connection)
+            config = item.wamp_config
+            if not config:
+                continue
+
+            planned_subscriptions = set(item.subscriptions.keys())
+            connection = libwampli.Connection(config, planned_subscriptions=planned_subscriptions)
+            self.__ready_connection(conn_id, connection)
+
             log.debug("loaded %s for id %s from database", connection, conn_id)
             self._connections[conn_id] = connection
 
-    def __add_connection_listeners(self, connection: libwampli.Connection) -> None:
+    def __ready_connection(self, conn_id: int, connection: libwampli.Connection) -> None:
         def on_event(event):
-            return self.on_subscription_event(connection, event)
+            return self.on_subscription_event(conn_id, event)
 
         connection.on(libwampli.SubscriptionEvent, on_event)
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        for raw_conn_id, raw_item in self._db.items():
+            item = DBItem.unmarshal_json(raw_item)
+            conn_id = int(raw_conn_id)
+
+            subscriptions = {}
+            for topic, channel_id in item.subscriptions.items():
+                channel = self.bot.get_channel(channel_id)
+                if channel:
+                    subscriptions[topic] = channel
+                else:
+                    log.warning(f"couldn't find channel {channel_id}")
+
+            log.debug(f"loaded %s subscription channel(s) for id %s from database", len(subscriptions), conn_id)
+            self._subscription_channels[conn_id] = subscriptions
 
     @commands.Cog.listener()
     async def on_disconnect(self) -> None:
         coros = (conn.close() for conn in self._connections.values())
         await asyncio.gather(*coros)
 
-    def _set_connection_config(self, conn_id: int, config: libwampli.ConnectionConfig) -> None:
-        self._conn_db[str(conn_id)] = config
-
     def _remove_connection(self, conn_id: int) -> asyncio.Future:
         # let the KeyError bubble
         connection = self._connections.pop(conn_id)
 
         try:
-            del self._conn_db[str(conn_id)]
+            del self._db[str(conn_id)]
+        except KeyError:
+            pass
+
+        try:
+            del self._subscription_channels[conn_id]
         except KeyError:
             pass
 
         loop = asyncio.get_event_loop()
         return loop.create_task(connection.close())
+
+    @contextlib.contextmanager
+    def _with_db_writeback(self, conn_id: int) -> Iterator[DBItem]:
+        key = str(conn_id)
+
+        try:
+            raw_item = self._db[key]
+        except KeyError:
+            item = DBItem(None, {})
+        else:
+            item = DBItem.unmarshal_json(raw_item)
+
+        yield item
+        log.debug("writing to %s", key)
+        self._db[key] = item.marshal_json()
 
     def _switch_connection(self, conn_id: int, new_connection: libwampli.Connection) -> None:
         try:
@@ -88,15 +155,23 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         except KeyError:
             pass
         else:
-            # don't close if it's the same connection
-            if connection is not new_connection:
-                loop = asyncio.get_event_loop()
-                loop.create_task(connection.close())
+            # don't do anything if it's the same connection
+            if connection is new_connection:
+                return
+
+            loop = asyncio.get_event_loop()
+            loop.create_task(connection.close())
+
+            # noinspection PyProtectedMember
+            # sighs, this should've been better...
+            new_connection._planned_subscriptions = connection._planned_subscriptions
 
         self._connections[conn_id] = new_connection
-        self._conn_db[str(conn_id)] = new_connection.config
 
-        self.__add_connection_listeners(new_connection)
+        with self._with_db_writeback(conn_id) as item:
+            item.wamp_config = new_connection.config
+
+        self.__ready_connection(conn_id, new_connection)
 
         log.debug("switched connection %s to %s", conn_id, new_connection)
 
@@ -116,20 +191,21 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("status")
     async def status_cmd(self, ctx: commands.Context) -> None:
+        embed = discord.Embed()
+
         try:
             connection = self._connections[get_conn_id(ctx)]
         except KeyError:
-            await ctx.send("Not connected and not configured")
-            return
+            embed.title = "Not connected and not configured"
+            embed.colour = discord.Colour.orange()
+        else:
+            config = connection.config
 
-        config = connection.config
+            embed.title = "Connected" if connection.connected else "Configured"
+            embed.colour = discord.Colour.blue() if connection.connected else discord.Colour.gold()
 
-        state = "Connected" if connection.connected else "Configured"
-        colour = discord.Colour.blue() if connection.connected else discord.Colour.gold()
-        embed = discord.Embed(title=state, colour=colour)
-
-        embed.add_field(name="endpoint", value=config.endpoint)
-        embed.add_field(name="realm", value=config.realm)
+            embed.add_field(name="endpoint", value=config.endpoint)
+            embed.add_field(name="realm", value=config.realm)
 
         await ctx.send(embed=embed)
 
@@ -201,17 +277,17 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="Done", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    def __get_channel_map(self, connection: libwampli.Connection) -> Dict[str, discord.TextChannel]:
+    def __get_channel_map(self, conn_id: int) -> Dict[str, discord.TextChannel]:
         try:
-            value = self._channels[connection]
+            value = self._subscription_channels[conn_id]
         except KeyError:
-            value = self._channels[connection] = {}
+            value = self._subscription_channels[conn_id] = {}
 
         return value
 
-    async def on_subscription_event(self, connection: libwampli.Connection,
+    async def on_subscription_event(self, conn_id: int,
                                     event: libwampli.SubscriptionEvent) -> None:
-        channels = self.__get_channel_map(connection)
+        channels = self.__get_channel_map(conn_id)
         try:
             channel = channels[event.uri]
         except KeyError:
@@ -221,35 +297,117 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title=f"Event {event.uri}",
                               colour=discord.Colour.blue())
 
-        embed.add_field(name="Arguments", value=event.format_args(), inline=False)
-        embed.add_field(name="Keyword Arguments", value=event.format_kwargs(), inline=False)
+        args_str = maybe_wrap_yaml(event.format_args())
+        if args_str:
+            embed.add_field(name="Arguments", value=args_str, inline=False)
+
+        kwargs_str = maybe_wrap_yaml(event.format_kwargs())
+        if kwargs_str:
+            embed.add_field(name="Keyword Arguments", value=kwargs_str, inline=False)
 
         await channel.send(embed=embed)
 
+    def __update_db_subscriptions(self, conn_id: int, subscriptions: Dict[str, discord.TextChannel]) -> None:
+        with self._with_db_writeback(conn_id) as item:
+            item.subscriptions = {topic: channel.id for topic, channel in subscriptions.items()}
+
     @commands.command("subscribe")
-    async def subscribe_cmd(self, ctx: commands.Context, topic: str) -> None:
+    async def subscribe_cmd(self, ctx: commands.Context, *topics: str) -> None:
         connection = self._cmd_get_connection(ctx)
+        conn_id = get_conn_id(ctx)
+        subscriptions = self.__get_channel_map(conn_id)
 
-        if connection.has_subscription(topic):
-            raise commands.CommandError(f"already subscribed to {topic}")
+        subscribed = []
+        already_subscribed = []
+        for topic in topics:
+            if connection.has_planned_subscription(topic):
+                already_subscribed.append(topic)
+                continue
 
-        await connection.add_subscription(topic)
-        self.__get_channel_map(connection)[topic] = ctx.channel
+            await connection.add_subscription(topic)
+            subscriptions[topic] = ctx.channel
+            subscribed.append(topic)
 
-        embed = discord.Embed(title=f"Subscribed to {topic}", colour=discord.Colour.green())
+        self.__update_db_subscriptions(conn_id, subscriptions)
+
+        embed = discord.Embed(colour=discord.Colour.green())
+        if not subscribed:
+            embed.title = "Already subscribed to all topics"
+        elif not already_subscribed:
+            if len(subscribed) == 1:
+                embed.title = f"Subscribed to {topics[0]}"
+            else:
+                embed.title = "Subscribed to all topics"
+        else:
+            embed.title = "Subscribed to some topics"
+            embed.add_field(name="Subscribed",
+                            value="\n".join(subscribed),
+                            inline=False)
+            embed.add_field(name="Already subscribed",
+                            value="\n".join(already_subscribed),
+                            inline=False)
+
         await ctx.send(embed=embed)
 
     @commands.command("unsubscribe")
-    async def unsubscribe_cmd(self, ctx: commands.Context, topic: str) -> None:
+    async def unsubscribe_cmd(self, ctx: commands.Context, *topics: str) -> None:
         connection = self._cmd_get_connection(ctx)
+        conn_id = get_conn_id(ctx)
+        subscriptions = self.__get_channel_map(conn_id)
 
-        if not connection.has_subscription(topic):
-            raise commands.CommandError(f"not subscribed to {topic}")
+        unsubscribed = []
+        already_unsubscribed = []
+        for topic in topics:
+            if not connection.has_planned_subscription(topic):
+                already_unsubscribed.append(topic)
+                continue
 
-        await connection.remove_subscription(topic)
-        del self.__get_channel_map(connection)[topic]
+            await connection.remove_subscription(topic)
+            del subscriptions[topic]
+            unsubscribed.append(topic)
 
-        embed = discord.Embed(title=f"Unsubscribed from {topic}", colour=discord.Colour.green())
+        self.__update_db_subscriptions(conn_id, subscriptions)
+
+        embed = discord.Embed(colour=discord.Colour.green())
+        if not unsubscribed:
+            embed.title = "Not subscribed to any topic"
+        elif not already_unsubscribed:
+            if len(unsubscribed) == 1:
+                embed.title = f"Unsubscribed from {topics[0]}"
+            else:
+                embed.title = "Unsubscribed from all topics"
+        else:
+            embed.title = "Unsubscribed from some topics"
+            embed.add_field(name="Unsubscribed",
+                            value="\n".join(unsubscribed),
+                            inline=False)
+            embed.add_field(name="Not subscribed",
+                            value="\n".join(already_unsubscribed),
+                            inline=False)
+
+        await ctx.send(embed=embed)
+
+    @commands.command("subscriptions")
+    async def subscriptions_cmd(self, ctx: commands.Context) -> None:
+        subscriptions = self.__get_channel_map(get_conn_id(ctx))
+
+        embed = discord.Embed(colour=discord.Colour.blue())
+
+        if not subscriptions:
+            embed.title = "No active subscriptions in this guild"
+            await ctx.send(embed=embed)
+            return
+
+        embed.title = "Subscriptions"
+
+        by_channel = {}
+        for topic, channel in subscriptions.items():
+            by_channel.setdefault(channel, []).append(topic)
+
+        for channel, topics in by_channel.items():
+            topics_str = "\n".join(f"- {topic}" for topic in topics)
+            embed.add_field(name=f"#{channel.name}", value=topics_str, inline=False)
+
         await ctx.send(embed=embed)
 
 
@@ -262,9 +420,17 @@ def get_conn_id(ctx: commands.Context) -> int:
         return ctx.author.id
 
 
+def wrap_yaml(s: str) -> str:
+    return f"```yaml\n{s}```"
+
+
+def maybe_wrap_yaml(s: str) -> str:
+    if s.count("\n") > 1:
+        return wrap_yaml(s)
+    else:
+        return s
+
+
 def discord_format(o: Any) -> str:
     s = libwampli.human_result(o)
-    if s.count("\n") > 1:
-        return f"```yaml\n{s}```"
-
-    return s
+    return maybe_wrap_yaml(s)

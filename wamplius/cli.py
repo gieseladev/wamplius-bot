@@ -15,16 +15,28 @@ def _setup_logging() -> None:
         "version": 1,
 
         "formatters": {
-            "default": {
-                "format": "{levelname} {name}: {message}",
+            "colored": {
+                "()": "colorlog.ColoredFormatter",
+                "format": "{log_color}{bold}{levelname:8}{reset} "
+                          "{thin_purple}{name}:{reset} "
+                          "{msg_log_color}{message}",
                 "style": "{",
+                "secondary_log_colors": {
+                    "msg": {
+                        "DEBUG": "white",
+                        "INFO": "blue",
+                        "WARNING": "yellow",
+                        "ERROR": "red",
+                        "CRITICAL": "bold_red",
+                    },
+                },
             },
         },
 
         "handlers": {
             "console": {
-                "class": "logging.StreamHandler",
-                "formatter": "default",
+                "class": "colorlog.StreamHandler",
+                "formatter": "colored",
             },
         },
 

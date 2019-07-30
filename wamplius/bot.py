@@ -22,6 +22,8 @@ def create_bot(config: Config, *,
 
     @bot.listen()
     async def on_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
+        log.info("command error:", error)
+
         if isinstance(error, commands.CommandInvokeError):
             error = error.original
 
@@ -29,6 +31,11 @@ def create_bot(config: Config, *,
                               description=str(error),
                               colour=discord.Colour.red())
         await ctx.send(embed=embed)
+
+    @bot.command("shutdown")
+    async def shutdown_cmd(ctx: commands.Context) -> None:
+        await ctx.send(embed=discord.Embed(title="Goodbye", colour=discord.Colour.green()))
+        await bot.close()
 
     bot.add_cog(WampliusCog(bot))
 

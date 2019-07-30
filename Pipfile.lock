@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "d60d2b5bd52ab5cd849f4cd36d25fe839898b2251e934bf68d5df87087ff2624"
+            "sha256": "5cdb910984234457a3db7f11606c3f77d159127567853414dea49aeaee7879d4"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -124,6 +124,22 @@
                 "sha256:fc323ffcaeaed0e0a02bf4d117757b98aed530d9ed4531e3e15460124c106691"
             ],
             "version": "==3.0.4"
+        },
+        "colorama": {
+            "hashes": [
+                "sha256:05eed71e2e327246ad6b38c540c4a3117230b19679b875190486ddd2d721422d",
+                "sha256:f8ac84de7840f5b9c4e3347b3c1eaa50f7e49c2b07596221daec5edaabbd7c48"
+            ],
+            "markers": "sys_platform == 'win32'",
+            "version": "==0.4.1"
+        },
+        "colorlog": {
+            "hashes": [
+                "sha256:3cf31b25cbc8f86ec01fef582ef3b840950dea414084ed19ab922c8b493f9b42",
+                "sha256:450f52ea2a2b6ebb308f034ea9a9b15cea51e65650593dca1da3eb792e4e4981"
+            ],
+            "index": "pypi",
+            "version": "==4.0.2"
         },
         "cryptography": {
             "hashes": [
@@ -265,10 +281,10 @@
         },
         "wampli": {
             "hashes": [
-                "sha256:3590d1af769ff12146616f4a2b099ed8445c8a92783bfb3a056e124b1c6eab83"
+                "sha256:3cdd6c48ef7ff04f4fe729d7fa82b1a2ccfa28980cb8266d3916c2cbf3463f59"
             ],
             "index": "pypi",
-            "version": "==0.1.5"
+            "version": "==0.1.6"
         },
         "websockets": {
             "hashes": [
