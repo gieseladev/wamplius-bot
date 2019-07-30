@@ -265,10 +265,10 @@
         },
         "wampli": {
             "hashes": [
-                "sha256:64de2119a37b4c51ba44c49b3711d555ec5ca21e8cbbb0ebe0f9c2eda56b20ad"
+                "sha256:3590d1af769ff12146616f4a2b099ed8445c8a92783bfb3a056e124b1c6eab83"
             ],
             "index": "pypi",
-            "version": "==0.1.4"
+            "version": "==0.1.5"
         },
         "websockets": {
             "hashes": [

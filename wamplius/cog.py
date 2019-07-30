@@ -88,8 +88,10 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         except KeyError:
             pass
         else:
-            loop = asyncio.get_event_loop()
-            loop.create_task(connection.close())
+            # don't close if it's the same connection
+            if connection is not new_connection:
+                loop = asyncio.get_event_loop()
+                loop.create_task(connection.close())
 
         self._connections[conn_id] = new_connection
         self._conn_db[str(conn_id)] = new_connection.config
@@ -217,11 +219,10 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             return
 
         embed = discord.Embed(title=f"Event {event.uri}",
-                              # TODO add special format_args and format_kwargs
-                              #     methods to SubscriptionEvent so we can
-                              #     customise it here.
-                              description=str(event),
                               colour=discord.Colour.blue())
+
+        embed.add_field(name="Arguments", value=event.format_args(), inline=False)
+        embed.add_field(name="Keyword Arguments", value=event.format_kwargs(), inline=False)
 
         await channel.send(embed=embed)
 
