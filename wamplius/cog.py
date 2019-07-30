@@ -6,15 +6,15 @@ import dbm
 import json
 import logging
 import pathlib
-from typing import Any, Dict, Iterator, MutableMapping, Optional
+import re
+from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Pattern, Tuple, Type
 
 import discord
 import libwampli
 from autobahn import wamp
 from discord.ext import commands
 
-__all__ = ["WampliusCog",
-           "get_conn_id"]
+__all__ = ["WampliusCog"]
 
 log = logging.getLogger(__name__)
 
@@ -229,8 +229,6 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         self._switch_connection(get_conn_id(ctx), connection)
 
         embed = discord.Embed(title="Joined session", colour=discord.Colour.green())
-        embed.add_field(name="realm", value=realm)
-
         await ctx.send(embed=embed)
 
     @commands.command("disconnect")
@@ -245,10 +243,43 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
+    async def substitute_variable(self, ctx: commands.Context, arg: str) -> str:
+        match = RE_SNOWFLAKE_MATCH.match(arg)
+        if match:
+            return match.group(1)
+
+        match = RE_VARIABLE_MATCH.match(arg)
+        if match:
+            var = match.group(1).lower()
+
+            if var == "guild_id":
+                try:
+                    return str(ctx.guild.id)
+                except AttributeError:
+                    raise commands.UserInputError("no guild id available") from None
+
+        match = RE_CONVERSION_MATCH.match(arg)
+        if match:
+            value, typ = match.groups()
+            try:
+                converter = CONVERTERS[typ]
+            except KeyError:
+                pass
+            else:
+                repl = await call_converter(converter, ctx, value)
+                return str(repl.id)
+
+        return arg
+
+    async def substitute_variables(self, ctx: commands.Context, args: List[str]) -> List[str]:
+        return await asyncio.gather(*(self.substitute_variable(ctx, arg) for arg in args))
+
     @commands.command("call")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
         session = self._cmd_get_session(ctx)
 
+        args = libwampli.split_arg_string(args)
+        args = await self.substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
         libwampli.ready_uri(args)
 
@@ -264,6 +295,8 @@ class WampliusCog(commands.Cog, name="Wamplius"):
     async def publish_cmd(self, ctx: commands.Context, *, args) -> None:
         session = self._cmd_get_session(ctx)
 
+        args = libwampli.split_arg_string(args)
+        args = await self.substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
         libwampli.ready_uri(args)
 
@@ -434,3 +467,25 @@ def maybe_wrap_yaml(s: str) -> str:
 def discord_format(o: Any) -> str:
     s = libwampli.human_result(o)
     return maybe_wrap_yaml(s)
+
+
+async def call_converter(converter: Type[commands.Converter], ctx: commands.Context, arg: str) -> Any:
+    return await converter().convert(ctx, arg)
+
+
+RE_SNOWFLAKE_MATCH: Pattern = re.compile(r"<[@#](\d+)>")
+
+RE_CONVERSION_MATCH: Pattern = re.compile(r"\((.+?)\) as (\w{2,})")
+
+CONVERTER_ALIASES: Dict[Type[commands.Converter], Tuple[str, ...]] = {
+    commands.TextChannelConverter: ("tc", "channel", "TextChannel"),
+    commands.VoiceChannelConverter: ("vc", "VoiceChannel"),
+}
+
+CONVERTERS: Dict[str, Type[commands.Converter]] = {
+    key: converter
+    for converter, keys in CONVERTER_ALIASES.items()
+    for key in keys
+}
+
+RE_VARIABLE_MATCH: Pattern = re.compile(r"\$(\w{3,})")
