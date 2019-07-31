@@ -239,7 +239,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         await ctx.send(embed=embed)
 
-    @commands.command("connect")
+    @commands.command("connect", usage="[<url> <realm>]")
     async def connect_cmd(self, ctx: commands.Context, url: str = None, realm: str = None) -> None:
         """Connect to the router.
 
@@ -254,7 +254,6 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             connection = libwampli.Connection(libwampli.ConnectionConfig(realm, transports))
         else:
             connection = self._cmd_get_connection(ctx)
-            realm = connection.config.realm
 
         try:
             await connection.open()
@@ -279,7 +278,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    @commands.command("call")
+    @commands.command("call", usage="<procedure> [arg]...")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
         """Call a procedure."""
         session = self._cmd_get_session(ctx)
@@ -297,7 +296,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(description=discord_format(result), colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    @commands.command("publish")
+    @commands.command("publish", usage="<topic> [arg]...")
     async def publish_cmd(self, ctx: commands.Context, *, args) -> None:
         """Publish an event to a topic."""
         session = self._cmd_get_session(ctx)

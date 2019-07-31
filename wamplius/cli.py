@@ -84,7 +84,7 @@ def get_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-c", "--config", default="config.toml", help="specify version")
+    parser.add_argument("-c", "--config", default="config.toml", help="specify config file")
 
     return parser
 
