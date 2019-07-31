@@ -1,3 +1,5 @@
+"""Command-line interface for wamplius."""
+
 import argparse
 import asyncio
 import logging
@@ -76,6 +78,10 @@ def _setup_uvloop() -> None:
 
 
 def get_parser() -> argparse.ArgumentParser:
+    """Get the argument parser.
+
+    The parser provides the config argument.
+    """
     parser = argparse.ArgumentParser()
 
     parser.add_argument("-c", "--config", default="config.toml", help="specify version")
@@ -84,6 +90,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> None:
+    """Run the bot with the given arguments from `get_parser`."""
     _setup_logging()
     _setup_uvloop()
 
@@ -98,6 +105,10 @@ def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Main entry point.
+
+    Parses the command-line arguments and runs the bot.
+    """
     parser = get_parser()
     args = parser.parse_args()
 

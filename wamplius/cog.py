@@ -1,3 +1,10 @@
+"""Cog for discord.py's commands framework.
+
+
+This cog doesn't depend on wamplius, it can be extracted and work by itself.
+It requires `libwampli` to work.
+"""
+
 import asyncio
 import atexit
 import contextlib
@@ -7,7 +14,7 @@ import json
 import logging
 import pathlib
 import re
-from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Pattern, Tuple, Type
+from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Pattern, Tuple, Type, Union
 
 import discord
 import libwampli
@@ -23,16 +30,26 @@ DB_PATH = pathlib.Path("data/connections/db")
 
 @dataclasses.dataclass()
 class DBItem:
+    """Stored data for a connection id.
+
+    Attributes:
+        wamp_config (Optional[libwampli.ConnectionConfig]): Config for the
+            connection.
+        subscriptions (Dict[str, int]): Subscriptions for the connection.
+            Mapping topic to the channel id.
+    """
     wamp_config: Optional[libwampli.ConnectionConfig]
     subscriptions: Dict[str, int]
 
     @classmethod
     def unmarshal_json(cls, data: str):
+        """Load a `DBItem` from the raw json data."""
         data = json.loads(data)
         config = libwampli.ConnectionConfig(**data.pop("wamp_config"))
         return cls(config, **data)
 
     def as_dict(self) -> Dict[str, Any]:
+        """Convert the item to a dictionary."""
         data = {"subscriptions": self.subscriptions}
 
         config = self.wamp_config
@@ -45,6 +62,7 @@ class DBItem:
         return data
 
     def marshal_json(self) -> str:
+        """Encode the item using JSON and return the resulting string."""
         return json.dumps(self.as_dict())
 
 
@@ -55,15 +73,17 @@ class WampliusCog(commands.Cog, name="Wamplius"):
     _subscription_channels: Dict[int, Dict[str, discord.TextChannel]]
     _db: MutableMapping[str, str]
 
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot, *,
+                 db_path: Union[str, pathlib.Path] = DB_PATH) -> None:
         self.bot = bot
 
         self._connections = {}
         self._subscription_channels = {}
 
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db_path = pathlib.Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._db = dbm.open(str(DB_PATH), flag="c")
+        self._db = dbm.open(str(db_path), flag="c")
         # noinspection PyUnresolvedReferences
         # because it's not truly a MutableMapping
         atexit.register(self._db.close)
@@ -97,6 +117,10 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
+        """Handler for when the bot is ready.
+
+        Loads the channels for the subscriptions.
+        """
         for raw_conn_id, raw_item in self._db.items():
             item = DBItem.unmarshal_json(raw_item)
             conn_id = int(raw_conn_id)
@@ -114,6 +138,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.Cog.listener()
     async def on_disconnect(self) -> None:
+        """Handler for when the bot disconnects.
+
+        Closes all connections.
+        """
+        self._subscription_channels.clear()
         coros = (conn.close() for conn in self._connections.values())
         await asyncio.gather(*coros)
 
@@ -191,6 +220,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("status")
     async def status_cmd(self, ctx: commands.Context) -> None:
+        """Get the status of the connection."""
         embed = discord.Embed()
 
         try:
@@ -211,6 +241,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("connect")
     async def connect_cmd(self, ctx: commands.Context, url: str = None, realm: str = None) -> None:
+        """Connect to the router.
+
+        If a config exists this can be called without providing the details.
+        To establish a new connection, provide the url and realm.
+        """
         if bool(url) != bool(realm):
             raise commands.UserInputError("if url is specified realm cannot be omitted")
 
@@ -233,6 +268,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("disconnect")
     async def disconnect_cmd(self, ctx: commands.Context) -> None:
+        """Disonnect from the router."""
         connection = self._connections.get(get_conn_id(ctx))
 
         if not (connection and connection.connected):
@@ -243,43 +279,13 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    async def substitute_variable(self, ctx: commands.Context, arg: str) -> str:
-        match = RE_SNOWFLAKE_MATCH.match(arg)
-        if match:
-            return match.group(1)
-
-        match = RE_VARIABLE_MATCH.match(arg)
-        if match:
-            var = match.group(1).lower()
-
-            if var == "guild_id":
-                try:
-                    return str(ctx.guild.id)
-                except AttributeError:
-                    raise commands.UserInputError("no guild id available") from None
-
-        match = RE_CONVERSION_MATCH.match(arg)
-        if match:
-            value, typ = match.groups()
-            try:
-                converter = CONVERTERS[typ]
-            except KeyError:
-                pass
-            else:
-                repl = await call_converter(converter, ctx, value)
-                return str(repl.id)
-
-        return arg
-
-    async def substitute_variables(self, ctx: commands.Context, args: List[str]) -> List[str]:
-        return await asyncio.gather(*(self.substitute_variable(ctx, arg) for arg in args))
-
     @commands.command("call")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
+        """Call a procedure."""
         session = self._cmd_get_session(ctx)
 
         args = libwampli.split_arg_string(args)
-        args = await self.substitute_variables(ctx, args)
+        args = await substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
         libwampli.ready_uri(args)
 
@@ -293,10 +299,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("publish")
     async def publish_cmd(self, ctx: commands.Context, *, args) -> None:
+        """Publish an event to a topic."""
         session = self._cmd_get_session(ctx)
 
         args = libwampli.split_arg_string(args)
-        args = await self.substitute_variables(ctx, args)
+        args = await substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
         libwampli.ready_uri(args)
 
@@ -320,6 +327,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     async def on_subscription_event(self, conn_id: int,
                                     event: libwampli.SubscriptionEvent) -> None:
+        """Handler for events received for subscribed topics."""
         channels = self.__get_channel_map(conn_id)
         try:
             channel = channels[event.uri]
@@ -346,6 +354,10 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("subscribe")
     async def subscribe_cmd(self, ctx: commands.Context, *topics: str) -> None:
+        """Subscribe to a topic.
+
+        You can pass multiple topics to subscribe to.
+        """
         connection = self._cmd_get_connection(ctx)
         conn_id = get_conn_id(ctx)
         subscriptions = self.__get_channel_map(conn_id)
@@ -384,6 +396,10 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("unsubscribe")
     async def unsubscribe_cmd(self, ctx: commands.Context, *topics: str) -> None:
+        """Unsubscribe from a topic.
+
+        You can also pass multiple topics to unsubscribe from.
+        """
         connection = self._cmd_get_connection(ctx)
         conn_id = get_conn_id(ctx)
         subscriptions = self.__get_channel_map(conn_id)
@@ -422,6 +438,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("subscriptions")
     async def subscriptions_cmd(self, ctx: commands.Context) -> None:
+        """See the subscriptions."""
         subscriptions = self.__get_channel_map(get_conn_id(ctx))
 
         embed = discord.Embed(colour=discord.Colour.blue())
@@ -445,6 +462,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
 
 def get_conn_id(ctx: commands.Context) -> int:
+    """Get the id used as a key for the connection.
+
+    This is the guild id unless the context is a direct message, in
+    which case the user id is returned.
+    """
     guild = ctx.guild
 
     if guild is not None:
@@ -454,10 +476,12 @@ def get_conn_id(ctx: commands.Context) -> int:
 
 
 def wrap_yaml(s: str) -> str:
+    """Wrap the given string in a yaml block."""
     return f"```yaml\n{s}```"
 
 
 def maybe_wrap_yaml(s: str) -> str:
+    """Wrap the given string in a yaml block if it spans multiple lines."""
     if s.count("\n") > 1:
         return wrap_yaml(s)
     else:
@@ -465,27 +489,72 @@ def maybe_wrap_yaml(s: str) -> str:
 
 
 def discord_format(o: Any) -> str:
+    """Format an object to a discord readable format.
+
+    Uses `libwampli.human_result` and passes it to `maybe_wrap_yaml`.
+    """
     s = libwampli.human_result(o)
     return maybe_wrap_yaml(s)
 
 
 async def call_converter(converter: Type[commands.Converter], ctx: commands.Context, arg: str) -> Any:
+    """Call a converter and return the result."""
     return await converter().convert(ctx, arg)
 
 
+# match mentions and capture snowflake in a group
 RE_SNOWFLAKE_MATCH: Pattern = re.compile(r"<[@#](\d+)>")
 
+# match (x) as y conversions capturing x and y in groups
 RE_CONVERSION_MATCH: Pattern = re.compile(r"\((.+?)\) as (\w{2,})")
 
+# Mapping of converter to aliases
 CONVERTER_ALIASES: Dict[Type[commands.Converter], Tuple[str, ...]] = {
     commands.TextChannelConverter: ("tc", "channel", "TextChannel"),
     commands.VoiceChannelConverter: ("vc", "VoiceChannel"),
 }
 
+# Mapping of alias to converter
 CONVERTERS: Dict[str, Type[commands.Converter]] = {
     key: converter
     for converter, keys in CONVERTER_ALIASES.items()
     for key in keys
 }
 
+# match $VARIABLE capturing the variable name (VARIABLE) in a group
 RE_VARIABLE_MATCH: Pattern = re.compile(r"\$(\w{3,})")
+
+
+async def substitute_variable(ctx: commands.Context, arg: str) -> str:
+    """Perform a substitution for a single argument."""
+    match = RE_SNOWFLAKE_MATCH.match(arg)
+    if match:
+        return match.group(1)
+
+    match = RE_VARIABLE_MATCH.match(arg)
+    if match:
+        var = match.group(1).lower()
+
+        if var == "guild_id":
+            try:
+                return str(ctx.guild.id)
+            except AttributeError:
+                raise commands.UserInputError("no guild id available") from None
+
+    match = RE_CONVERSION_MATCH.match(arg)
+    if match:
+        value, typ = match.groups()
+        try:
+            converter = CONVERTERS[typ]
+        except KeyError:
+            pass
+        else:
+            repl = await call_converter(converter, ctx, value)
+            return str(repl.id)
+
+    return arg
+
+
+async def substitute_variables(ctx: commands.Context, args: List[str]) -> List[str]:
+    """Substitute the variables / mentions and perform conversions."""
+    return await asyncio.gather(*(substitute_variable(ctx, arg) for arg in args))

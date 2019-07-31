@@ -1,3 +1,5 @@
+"""Simple discord bot using the commands framework to run wamplius."""
+
 import asyncio
 import logging
 
@@ -14,6 +16,10 @@ log = logging.getLogger(__name__)
 
 def create_bot(config: Config, *,
                loop: asyncio.AbstractEventLoop = None) -> commands.Bot:
+    """Create a commands bot with the wamplius cog loaded.
+
+    There are also a few utility commands and event listeners added.
+    """
     bot = commands.Bot(config.command_prefix, loop=loop)
 
     @bot.listen()
