@@ -28,7 +28,7 @@ def create_bot(config: Config, *,
 
     @bot.listen()
     async def on_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
-        log.info("command error:", error)
+        log.info("command error: %s", error)
 
         if isinstance(error, commands.CommandInvokeError):
             error = error.original
