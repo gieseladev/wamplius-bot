@@ -14,7 +14,7 @@ import json
 import logging
 import pathlib
 import re
-from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Pattern, Tuple, Type, Union
+from typing import Any, Dict, Iterator, List, Mapping, MutableMapping, Optional, Pattern, Tuple, Type, TypeVar, Union
 
 import discord
 import libwampli
@@ -94,7 +94,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             log.exception("couldn't load connections from database")
 
     def __load_from_db(self) -> None:
-        for raw_conn_id, raw_item in self._db.items():
+        for raw_conn_id, raw_item in iter_items(self._db):
             item = DBItem.unmarshal_json(raw_item)
             conn_id = int(raw_conn_id)
 
@@ -121,7 +121,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         Loads the channels for the subscriptions.
         """
-        for raw_conn_id, raw_item in self._db.items():
+        for raw_conn_id, raw_item in iter_items(self._db):
             item = DBItem.unmarshal_json(raw_item)
             conn_id = int(raw_conn_id)
 
@@ -485,6 +485,23 @@ def maybe_wrap_yaml(s: str) -> str:
         return wrap_yaml(s)
     else:
         return s
+
+
+K = TypeVar("K")
+V = TypeVar("V")
+
+
+def iter_items(mapping: Mapping[K, V]) -> Iterator[Tuple[K, V]]:
+    """Iterate over (key, value) pairs of a mapping.
+
+    Iterates over the mapping's keys and yields it together with the
+    corresponding value.
+
+    Can be used to iterate over objects which don't provide the items
+    iterator, but have a keys iterator. Looking at you, dbm!
+    """
+    for key in mapping.keys():
+        yield (key, mapping[key])
 
 
 def discord_format(o: Any) -> str:
