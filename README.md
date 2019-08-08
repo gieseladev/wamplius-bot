@@ -22,8 +22,6 @@ publish events to a topic, and subscribe to topics.
     - [General](#general)
 
 
-
-
 ## Running
 
 There are two ways you can run the bot yourself. In both cases you need
@@ -143,23 +141,23 @@ The following is a list of commands supported by the bot.
 
 Commands provided by the WAMPlius cog.
 
-| Command                                          | Description                                                                                                                       |
-|:-------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------|
-| `status`                                         | Display the status of the connection for the context (guild or DM).                                                               |
-| `connect [<url> <realm>]`                        | Connect to a WAMP router. The url and realm arguments can be omitted if WAMPlius has a connection configured for the context.     |
-| `disconnect`                                     | Disconnect from the WAMP router. The previous configuration is preserved, so calling `connect` without arguments will re-connect. |
-| `call <procedure> [arg]...`                      | Call a procedure.                                                                                                                 |
-| `publish <topic> [arg]...`                       | Publish an event to a topic.                                                                                                      |
-| `subscriptions`                                  | Display all subscribed topics and their channel.                                                                                  |
-| `subscribe <topic>...`                           | Subscribe to one or more topics. Events from the topics will be displayed in the channel the command is executed in.              |
-| `unsubscribe <topic>...`                         | Unsubscribe from one or more topics.                                                                                              |
-| `alias list`                                     | List all URI aliases.                                                                                                             |
-| `alias add <name> <uri>`                         | Add a new alias *name* which resolves to *uri*.                                                                                   |
-| `alias remove <name>`                            | Remove an alias by its *name*.                                                                                                    |
-| `macro <name>`                                   | Run the macro *name*.                                                                                                             |
-| `macro list`                                     | List all macros.                                                                                                                  |
-| `macro add <name> (call|publish) <uri> [arg]...` | Add a new macro *name* which either calls or publishes the *uri* with the arguments.                                              |
-| `macro remove <name>`                            | Remove the macro *name*.                                                                                                          |
+| Command                                           | Description                                                                                                                       |
+|:--------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------|
+| `status`                                          | Display the status of the connection for the context (guild or DM).                                                               |
+| `connect [<url> <realm>]`                         | Connect to a WAMP router. The url and realm arguments can be omitted if WAMPlius has a connection configured for the context.     |
+| `disconnect`                                      | Disconnect from the WAMP router. The previous configuration is preserved, so calling `connect` without arguments will re-connect. |
+| `call <procedure> [arg]...`                       | Call a procedure.                                                                                                                 |
+| `publish <topic> [arg]...`                        | Publish an event to a topic.                                                                                                      |
+| `subscriptions`                                   | Display all subscribed topics and their channel.                                                                                  |
+| `subscribe <topic>...`                            | Subscribe to one or more topics. Events from the topics will be displayed in the channel the command is executed in.              |
+| `unsubscribe <topic>...`                          | Unsubscribe from one or more topics.                                                                                              |
+| `alias list`                                      | List all URI aliases.                                                                                                             |
+| `alias add <name> <uri>`                          | Add a new alias *name* which resolves to *uri*.                                                                                   |
+| `alias remove <name>`                             | Remove an alias by its *name*.                                                                                                    |
+| `macro <name>`                                    | Run the macro *name*.                                                                                                             |
+| `macro list`                                      | List all macros.                                                                                                                  |
+| `macro add <name> (call｜publish) <uri> [arg]...` | Add a new macro *name* which either calls or publishes the *uri* with the arguments.                                              |
+| `macro remove <name>`                             | Remove the macro *name*.                                                                                                          |
 
 
 ### General
