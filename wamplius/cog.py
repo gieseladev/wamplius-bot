@@ -312,7 +312,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.command("call", usage="<procedure> [arg]...")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
-        """Call a procedure."""
+        """Call a procedure.
+
+        You can use the function-style syntax:
+        call wamp.session.get($GUILD_ID, key="value")
+        """
         args = libwampli.split_arg_string(args)
 
         result = await self.perform_call(ctx, args)
@@ -488,7 +492,13 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
     @commands.group("alias", invoke_without_command=True)
     async def alias_group(self, ctx: commands.Context) -> None:
-        """URI aliases."""
+        """Manage URI aliases.
+
+        Registered aliases can be used instead of the fully qualified URI.
+        Instead of having to type "com.wamp.session.list" every time you can
+        add an alias "alias add sesslist com.wamp.session.list" and use
+        "sesslist" whenever a URI is applicable.
+        """
         await ctx.send_help(self.alias_group)
 
     @alias_group.command("list", aliases=("ls",))
@@ -554,25 +564,35 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             colour=discord.Colour.green(),
         ))
 
-    @commands.group("macro", invoke_without_command=True)
+    @commands.group("macro", usage="<macro>", invoke_without_command=True)
     async def macro_group(self, ctx: commands.Context, macro: str = None) -> None:
+        """Manage macros.
+
+        Macros assign a name to a pre-defined operation. Macros can be created
+        for publishing topics and calling procedures.
+
+        To run a macro use "macro <name>".
+
+        Variables are evaluated when the macro is called, not when created.
+        """
         if not macro:
             await ctx.send_help(self.macro_group)
             return
 
         item = self._get_db_item(get_conn_id(ctx))
         try:
-            cmd, args = item.macros[macro]
+            op, args = item.macros[macro]
         except KeyError:
             raise commands.UserInputError(f"Macro {macro} not found") from None
 
-        if cmd == "call":
+        if op == "call":
             await self.perform_call(ctx, args)
-        elif cmd == "publish":
+        elif op == "publish":
             await self.perform_publish(ctx, args)
 
     @macro_group.command("list", aliases=("ls",))
     async def macro_list_cmd(self, ctx: commands.Context) -> None:
+        """List all macros."""
         item = self._get_db_item(get_conn_id(ctx))
 
         embed = discord.Embed(title="Macros", colour=discord.Colour.blue())
@@ -589,10 +609,15 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         await ctx.send(embed=embed)
 
-    @macro_group.command("add")
-    async def macro_add_cmd(self, ctx: commands.Context, name: str, command: str, *, args: str) -> None:
-        if command not in ("call", "publish"):
-            raise commands.UserInputError(f"Unknown command {command}, expected call or publish")
+    @macro_group.command("add", usage="<name> <operation> <uri> [arg]...")
+    async def macro_add_cmd(self, ctx: commands.Context, name: str, operation: str, *, args: str) -> None:
+        """Define a new macro.
+
+        You can use the function-style syntax to define a macro:
+        macro add call wamp.session.get($GUILD_ID)
+        """
+        if operation not in ("call", "publish"):
+            raise commands.UserInputError(f"Unknown operation {operation}, expected call or publish")
 
         args = libwampli.split_arg_string(args)
 
@@ -604,10 +629,25 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         with self._with_db_writeback(get_conn_id(ctx)) as item:
             item = cast(DBItem, item)
-            item.macros[name] = (command, tuple(args))
+            item.macros[name] = (operation, tuple(args))
 
         await ctx.send(embed=discord.Embed(
             title=f"Added macro {name}",
+            colour=discord.Colour.green(),
+        ))
+
+    @macro_group.command("remove", aliases=("rm",))
+    async def macro_remove_cmd(self, ctx: commands.Context, name: str) -> None:
+        """Remove a macro."""
+        try:
+            with self._with_db_writeback(get_conn_id(ctx)) as item:
+                item = cast(DBItem, item)
+                item.macros.pop(name)
+        except KeyError:
+            raise commands.UserInputError(f"Macro {name} doesn't exist")
+
+        await ctx.send(embed=discord.Embed(
+            title=f"Removed macro {name}",
             colour=discord.Colour.green(),
         ))
 
