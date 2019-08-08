@@ -14,7 +14,8 @@ import json
 import logging
 import pathlib
 import re
-from typing import Any, Dict, Iterator, List, Mapping, MutableMapping, Optional, Pattern, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Pattern, Tuple, Type, \
+    TypeVar, Union, cast
 
 import discord
 import libwampli
@@ -37,9 +38,16 @@ class DBItem:
             connection.
         subscriptions (Dict[str, int]): Subscriptions for the connection.
             Mapping topic to the channel id.
+
+        aliases (Dict[str, str]): Mapping from alias to URI.
+        macros (Dict[str, Tuple[str, Tuple[str, ...]]]): Macro calls. Mapping
+            from macro name to a tuple containing the action and the arguments.
     """
     wamp_config: Optional[libwampli.ConnectionConfig]
-    subscriptions: Dict[str, int]
+    subscriptions: Dict[str, int] = dataclasses.field(default_factory=dict)
+
+    aliases: Dict[str, str] = dataclasses.field(default_factory=dict)
+    macros: Dict[str, Tuple[str, Tuple[str, ...]]] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def unmarshal_json(cls, data: str):
@@ -50,7 +58,9 @@ class DBItem:
 
     def as_dict(self) -> Dict[str, Any]:
         """Convert the item to a dictionary."""
-        data = {"subscriptions": self.subscriptions}
+        data = {"subscriptions": self.subscriptions,
+                "aliases": self.aliases,
+                "macros": self.macros}
 
         config = self.wamp_config
         if config:
@@ -163,16 +173,26 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         loop = asyncio.get_event_loop()
         return loop.create_task(connection.close())
 
-    @contextlib.contextmanager
-    def _with_db_writeback(self, conn_id: int) -> Iterator[DBItem]:
+    def _get_db_item(self, conn_id: Union[int, str]) -> DBItem:
         key = str(conn_id)
 
         try:
             raw_item = self._db[key]
         except KeyError:
-            item = DBItem(None, {})
+            item = DBItem(None)
         else:
             item = DBItem.unmarshal_json(raw_item)
+
+        return item
+
+    def _get_aliases(self, conn_id: int) -> Mapping[str, str]:
+        return self._get_db_item(conn_id).aliases
+
+    @contextlib.contextmanager
+    def _with_db_writeback(self, conn_id: int) -> Iterator[DBItem]:
+        key = str(conn_id)
+
+        item = self._get_db_item(key)
 
         yield item
         log.debug("writing to %s", key)
@@ -278,33 +298,34 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
+    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) -> Any:
+        session = self._cmd_get_session(ctx)
+
+        args = await substitute_variables(ctx, args)
+        args, kwargs = libwampli.parse_args(args)
+        libwampli.ready_uri(args, aliases=self._get_aliases(get_conn_id(ctx)))
+
+        try:
+            return await session.call(*args, **kwargs)
+        except wamp.ApplicationError as e:
+            raise commands.CommandError(e.error_message()) from None
+
     @commands.command("call", usage="<procedure> [arg]...")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
         """Call a procedure."""
-        session = self._cmd_get_session(ctx)
-
         args = libwampli.split_arg_string(args)
-        args = await substitute_variables(ctx, args)
-        args, kwargs = libwampli.parse_args(args)
-        libwampli.ready_uri(args)
 
-        try:
-            result = await session.call(*args, **kwargs)
-        except wamp.ApplicationError:
-            raise
+        result = await self.perform_call(ctx, args)
 
         embed = discord.Embed(description=discord_format(result), colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    @commands.command("publish", usage="<topic> [arg]...")
-    async def publish_cmd(self, ctx: commands.Context, *, args) -> None:
-        """Publish an event to a topic."""
+    async def perform_publish(self, ctx: commands.Context, args: Iterable[str]) -> None:
         session = self._cmd_get_session(ctx)
 
-        args = libwampli.split_arg_string(args)
         args = await substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
-        libwampli.ready_uri(args)
+        libwampli.ready_uri(args, aliases=self._get_aliases(get_conn_id(ctx)))
 
         kwargs["options"] = wamp.PublishOptions(acknowledge=True)
 
@@ -312,6 +333,12 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             await session.publish(*args, **kwargs)
         except wamp.ApplicationError as e:
             raise commands.CommandError(e.error_message()) from None
+
+    @commands.command("publish", usage="<topic> [arg]...")
+    async def publish_cmd(self, ctx: commands.Context, *, args: str) -> None:
+        """Publish an event to a topic."""
+        args = libwampli.split_arg_string(args)
+        await self.perform_publish(ctx, args)
 
         embed = discord.Embed(title="Done", colour=discord.Colour.green())
         await ctx.send(embed=embed)
@@ -459,6 +486,131 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         await ctx.send(embed=embed)
 
+    @commands.group("alias", invoke_without_command=True)
+    async def alias_group(self, ctx: commands.Context) -> None:
+        """URI aliases."""
+        await ctx.send_help(self.alias_group)
+
+    @alias_group.command("list", aliases=("ls",))
+    async def alias_list_cmd(self, ctx: commands.Context) -> None:
+        """List all aliases."""
+        item = self._get_db_item(get_conn_id(ctx))
+        aliases: List[Tuple[str, str]] = []
+        max_alias_len = 0
+
+        for alias, uri in item.aliases.items():
+            aliases.append((alias, uri))
+            alen = len(aliases)
+            if alen > max_alias_len:
+                max_alias_len = alen
+
+        if not aliases:
+            await ctx.send(embed=discord.Embed(
+                title="No aliases set",
+                colour=discord.Colour.blue(),
+            ))
+            return
+
+        alias_str_gen = (f"`{alias:{max_alias_len}}` {uri}" for alias, uri in aliases)
+        aliases_str = "\n".join(sorted(alias_str_gen))
+
+        await ctx.send(embed=discord.Embed(
+            title="Aliases",
+            description=aliases_str,
+            colour=discord.Colour.blue(),
+        ))
+
+    @alias_group.command("add")
+    async def alias_add_cmd(self, ctx: commands.Context, alias: str, uri: str) -> None:
+        """Add an alias for a uri."""
+        with self._with_db_writeback(get_conn_id(ctx)) as item:
+            item = cast(DBItem, item)
+            previous_uri = item.aliases.get(alias)
+
+            item.aliases[alias] = uri
+
+        if previous_uri:
+            text = f"Changed alias {alias} from {previous_uri} to {uri}"
+        else:
+            text = f"Added alias {alias} for {uri}"
+
+        await ctx.send(embed=discord.Embed(
+            title=text,
+            colour=discord.Colour.green(),
+        ))
+
+    @alias_group.command("remove", aliases=("rm",))
+    async def alias_remove_cmd(self, ctx: commands.Context, alias: str) -> None:
+        """Remove an alias."""
+        try:
+            with self._with_db_writeback(get_conn_id(ctx)) as item:
+                item = cast(DBItem, item)
+                uri = item.aliases.pop(alias)
+        except KeyError:
+            raise commands.UserInputError(f"No alias {alias} exists") from None
+
+        await ctx.send(embed=discord.Embed(
+            title=f"Removed alias {alias} for {uri}",
+            colour=discord.Colour.green(),
+        ))
+
+    @commands.group("macro", invoke_without_command=True)
+    async def macro_group(self, ctx: commands.Context, macro: str = None) -> None:
+        if not macro:
+            await ctx.send_help(self.macro_group)
+            return
+
+        item = self._get_db_item(get_conn_id(ctx))
+        try:
+            cmd, args = item.macros[macro]
+        except KeyError:
+            raise commands.UserInputError(f"Macro {macro} not found") from None
+
+        if cmd == "call":
+            await self.perform_call(ctx, args)
+        elif cmd == "publish":
+            await self.perform_publish(ctx, args)
+
+    @macro_group.command("list", aliases=("ls",))
+    async def macro_list_cmd(self, ctx: commands.Context) -> None:
+        item = self._get_db_item(get_conn_id(ctx))
+
+        embed = discord.Embed(title="Macros", colour=discord.Colour.blue())
+        if not item.macros:
+            embed.title = "No macros"
+            await ctx.send(embed=embed)
+            return
+
+        for name, (cmd, args) in item.macros.items():
+            f = libwampli.format_function_style(args)
+            embed.add_field(name=f"{name} ({cmd})",
+                            value=f,
+                            inline=False)
+
+        await ctx.send(embed=embed)
+
+    @macro_group.command("add")
+    async def macro_add_cmd(self, ctx: commands.Context, name: str, command: str, *, args: str) -> None:
+        if command not in ("call", "publish"):
+            raise commands.UserInputError(f"Unknown command {command}, expected call or publish")
+
+        args = libwampli.split_arg_string(args)
+
+        try:
+            sub_args = await substitute_variables(ctx, args)
+            libwampli.parse_args(sub_args)
+        except Exception as e:
+            raise commands.CommandError(f"Couldn't parse arguments: {e}")
+
+        with self._with_db_writeback(get_conn_id(ctx)) as item:
+            item = cast(DBItem, item)
+            item.macros[name] = (command, tuple(args))
+
+        await ctx.send(embed=discord.Embed(
+            title=f"Added macro {name}",
+            colour=discord.Colour.green(),
+        ))
+
 
 def get_conn_id(ctx: commands.Context) -> int:
     """Get the id used as a key for the connection.
@@ -571,6 +723,6 @@ async def substitute_variable(ctx: commands.Context, arg: str) -> str:
     return arg
 
 
-async def substitute_variables(ctx: commands.Context, args: List[str]) -> List[str]:
+async def substitute_variables(ctx: commands.Context, args: Iterable[str]) -> List[str]:
     """Substitute the variables / mentions and perform conversions."""
     return await asyncio.gather(*(substitute_variable(ctx, arg) for arg in args))
