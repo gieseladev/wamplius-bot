@@ -23,6 +23,10 @@ def create_bot(config: Config, *,
     bot = commands.Bot(config.command_prefix, loop=loop)
 
     @bot.listen()
+    async def on_message_edit(_, after: discord.Message) -> None:
+        await bot.process_commands(after)
+
+    @bot.listen()
     async def on_command(ctx: commands.Context) -> None:
         log.info("command: %s", ctx.command)
 
