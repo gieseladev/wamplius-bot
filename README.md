@@ -165,4 +165,5 @@ Commands provided by the WAMPlius cog.
 | Command          | Description                                                                                     |
 |:-----------------|:------------------------------------------------------------------------------------------------|
 | `help [command]` | Display usage and description of the command. If no command is given, display help for the bot. |
+| `version`        | Show the version of the bot and important libraries.                                            |
 | `shutdown`       | Perform a clean shutdown.                                                                       |

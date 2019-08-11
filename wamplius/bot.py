@@ -44,8 +44,25 @@ def create_bot(config: Config, *,
 
     @bot.command("shutdown")
     async def shutdown_cmd(ctx: commands.Context) -> None:
+        """Shut the bot down."""
         await ctx.send(embed=discord.Embed(title="Goodbye", colour=discord.Colour.green()))
         await bot.close()
+
+    @bot.command("version")
+    async def version_cmd(ctx: commands.Context) -> None:
+        """Show the version of the bot."""
+
+        import libwampli
+        import wamplius
+
+        description = f"wamplius: `{wamplius.__version__}`\n" \
+                      f"libwampli: `{libwampli.__version__}`"
+
+        await ctx.send(embed=discord.Embed(
+            title="Version",
+            description=description,
+            colour=discord.Colour.blue(),
+        ))
 
     bot.add_cog(WampliusCog(bot))
 
