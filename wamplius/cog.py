@@ -53,7 +53,13 @@ class DBItem:
     def unmarshal_json(cls, data: str):
         """Load a `DBItem` from the raw json data."""
         data = json.loads(data)
-        config = libwampli.ConnectionConfig(**data.pop("wamp_config"))
+        try:
+            wamp_config = data.pop("wamp_config")
+        except KeyError:
+            config = None
+        else:
+            config = libwampli.ConnectionConfig(**wamp_config)
+
         return cls(config, **data)
 
     def as_dict(self) -> Dict[str, Any]:

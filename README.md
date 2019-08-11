@@ -11,7 +11,7 @@ publish events to a topic, and subscribe to topics.
 
 [TOC]: # "Contents"
 
-# Contents
+## Contents
 - [Running](#running)
     - [Using Docker](#using-docker)
     - [Manually](#manually)
