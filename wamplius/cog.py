@@ -143,6 +143,9 @@ class LazyClient(Awaitable[aiowamp.ClientABC]):
             self.__client_task.cancel()
 
     async def sub(self, topic: str) -> None:
+        if topic in self.subscriptions:
+            return
+
         client = self.client
         if client:
             await client.subscribe(topic, self.__on_event)
