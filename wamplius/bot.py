@@ -3,6 +3,7 @@
 import asyncio
 import logging
 
+import aiowamp
 import discord
 from discord.ext import commands
 
@@ -56,7 +57,8 @@ def create_bot(config: Config, *,
         import wamplius
 
         description = f"wamplius: `{wamplius.__version__}`\n" \
-                      f"libwampli: `{libwampli.__version__}`"
+                      f"libwampli: `{libwampli.__version__}`" \
+                      f"aiowamp: `{aiowamp.__version__}`"
 
         await ctx.send(embed=discord.Embed(
             title="Version",

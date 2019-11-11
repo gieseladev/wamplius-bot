@@ -322,8 +322,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             raise commands.UserInputError("if url is specified realm cannot be omitted")
 
         if url:
-            transports = libwampli.get_transports(url)
-            client = LazyClient(libwampli.ConnectionConfig(realm, transports), self.on_subscription_event)
+            client = LazyClient(libwampli.ConnectionConfig(realm, url), self.on_subscription_event)
         else:
             client = self._cmd_get_lazy_client(ctx)
 
@@ -405,6 +404,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         return value
 
+    # FIXME: needs new version of aiowamp
     async def on_subscription_event(self, conn_id: int,
                                     event: libwampli.SubscriptionEvent) -> None:
         """Handler for events received for subscribed topics."""
