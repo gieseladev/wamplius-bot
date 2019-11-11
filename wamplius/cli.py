@@ -1,7 +1,6 @@
 """Command-line interface for wamplius."""
 
 import argparse
-import asyncio
 import logging
 import logging.config
 
@@ -9,10 +8,6 @@ log = logging.getLogger(__name__)
 
 
 def _setup_logging() -> None:
-    import txaio
-    # start the loggers in txaio so we can then overwrite them
-    txaio.start_logging(level="debug")
-
     logging.config.dictConfig({
         "version": 1,
 
@@ -43,14 +38,13 @@ def _setup_logging() -> None:
         },
 
         "loggers": {
+            "aiowamp": {
+                "level": "DEBUG",
+            },
             "libwampli": {
                 "level": "DEBUG",
             },
             "wamplius": {
-                "level": "DEBUG",
-            },
-
-            "autobahn": {
                 "level": "DEBUG",
             },
         },
@@ -66,15 +60,12 @@ def _setup_logging() -> None:
 
 def _setup_uvloop() -> None:
     try:
-        import txaio
         import uvloop
     except ImportError:
         log.info("not using uvloop")
     else:
         log.info("using uvloop")
         uvloop.install()
-        # update txaio loop because god knows they can't update it themselves
-        txaio.config.loop = asyncio.get_event_loop()
 
 
 def get_parser() -> argparse.ArgumentParser:

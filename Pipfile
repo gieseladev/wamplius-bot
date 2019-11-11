@@ -7,13 +7,12 @@ verify_ssl = true
 
 [packages]
 discord-py = "*"
-autobahn = "*"
-cbor = "*"
 konfi = "*"
 uvloop = {markers = "sys_platform != 'win32'"}
 pyyaml = "*"
 wampli = "*"
 colorlog = "*"
+aiowamp = "*"
 
 [requires]
 python_version = "3.7"
