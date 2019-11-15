@@ -35,7 +35,8 @@ Once you have a token you can then start the bot:
 
 The recommended way to run the bot is using
 [Docker](https://www.docker.com/). You can use the image
-[`gieseladev/wamplius`](https://hub.docker.com/r/gieseladev/wamplius).
+`gieseladev/wamplius-bot/wamplius` from the GitHub registry.
+i.e. `docker pull docker.pkg.github.com/gieseladev/wamplius-bot/wamplius`
 
 ```console
 $ docker run --env BOT_DISCORDTOKEN="<your token>" gieseladev/wamplius

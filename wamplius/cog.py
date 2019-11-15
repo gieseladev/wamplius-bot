@@ -14,12 +14,12 @@ import json
 import logging
 import pathlib
 import re
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Pattern, Tuple, Type, \
-    TypeVar, Union, cast
+from typing import Any, Awaitable, Callable, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Pattern, \
+    Set, Tuple, Type, TypeVar, Union, cast
 
+import aiowamp
 import discord
 import libwampli
-from autobahn import wamp
 from discord.ext import commands
 
 __all__ = ["WampliusCog"]
@@ -31,23 +31,16 @@ DB_PATH = pathlib.Path("data/connections/db")
 
 @dataclasses.dataclass()
 class DBItem:
-    """Stored data for a connection id.
-
-    Attributes:
-        wamp_config (Optional[libwampli.ConnectionConfig]): Config for the
-            connection.
-        subscriptions (Dict[str, int]): Subscriptions for the connection.
-            Mapping topic to the channel id.
-
-        aliases (Dict[str, str]): Mapping from alias to URI.
-        macros (Dict[str, Tuple[str, Tuple[str, ...]]]): Macro calls. Mapping
-            from macro name to a tuple containing the action and the arguments.
-    """
+    """Stored data for a connection id."""
     wamp_config: Optional[libwampli.ConnectionConfig]
+    """Config for the connection."""
     subscriptions: Dict[str, int] = dataclasses.field(default_factory=dict)
+    """Subscriptions for the connection. Mapping topic to the channel id."""
 
     aliases: Dict[str, str] = dataclasses.field(default_factory=dict)
+    """Mapping from alias to URI."""
     macros: Dict[str, Tuple[str, Tuple[str, ...]]] = dataclasses.field(default_factory=dict)
+    """Macro calls. Mapping from macro name to a tuple containing the action and the arguments."""
 
     @classmethod
     def unmarshal_json(cls, data: str):
@@ -82,10 +75,94 @@ class DBItem:
         return json.dumps(self.as_dict())
 
 
+EventHandler = Callable
+
+
+class LazyClient(Awaitable[aiowamp.ClientABC]):
+    subscriptions: Set[str]
+    config: libwampli.ConnectionConfig
+
+    __client_task: Optional[asyncio.Task]
+
+    __on_event: EventHandler
+
+    def __init__(self, config: libwampli.ConnectionConfig, on_event: EventHandler) -> None:
+        self.subscriptions = set()
+        self.config = config
+
+        self.__client_task = None
+
+        self.__on_event = on_event
+
+    def __str__(self) -> str:
+        client = self.client
+        if client:
+            return str(self.client)
+
+        return str(self.config)
+
+    @property
+    def client(self) -> Optional[aiowamp.ClientABC]:
+        try:
+            return self.__client_task.result()
+        except Exception:
+            return None
+
+    @property
+    def connected(self) -> bool:
+        return self.client is not None
+
+    async def __connect(self) -> aiowamp.ClientABC:
+        config = self.config
+        client = await aiowamp.connect(config.endpoint, realm=config.realm)
+
+        await asyncio.gather(*(client.subscribe(topic, self.__on_event)
+                               for topic in self.subscriptions))
+
+        return client
+
+    def __await__(self):
+        if self.__client_task is None:
+            loop = asyncio.get_running_loop()
+            self.__client_task = loop.create_task(self.__connect())
+
+        return self.__client_task.__await__()
+
+    async def close(self) -> None:
+        client = self.client
+        if client:
+            await client.close()
+        else:
+            self.__client_task.cancel()
+
+    async def sub(self, topic: str) -> None:
+        if topic in self.subscriptions:
+            return
+
+        client = self.client
+        if client:
+            await client.subscribe(topic, self.__on_event)
+
+        self.subscriptions.add(topic)
+
+    async def sub_topics(self, topics: Iterable[str]) -> None:
+        await asyncio.gather(*map(self.sub, topics))
+
+    async def unsub(self, topic: str) -> None:
+        self.subscriptions.discard(topic)
+
+        client = self.client
+        if not client:
+            return
+
+        with contextlib.suppress(KeyError):
+            await client.unsubscribe(topic)
+
+
 class WampliusCog(commands.Cog, name="Wamplius"):
     bot: commands.Bot
 
-    _connections: Dict[int, libwampli.Connection]
+    _clients: Dict[int, LazyClient]
     _subscription_channels: Dict[int, Dict[str, discord.TextChannel]]
     _db: MutableMapping[str, str]
 
@@ -93,7 +170,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
                  db_path: Union[str, pathlib.Path] = DB_PATH) -> None:
         self.bot = bot
 
-        self._connections = {}
+        self._clients = {}
         self._subscription_channels = {}
 
         db_path = pathlib.Path(db_path)
@@ -118,18 +195,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             if not config:
                 continue
 
-            planned_subscriptions = set(item.subscriptions.keys())
-            connection = libwampli.Connection(config, planned_subscriptions=planned_subscriptions)
-            self.__ready_connection(conn_id, connection)
+            client = LazyClient(config, lambda e: self.on_subscription_event(conn_id, e))
+            client.subscriptions = set(item.subscriptions.keys())
 
-            log.debug("loaded %s for id %s from database", connection, conn_id)
-            self._connections[conn_id] = connection
-
-    def __ready_connection(self, conn_id: int, connection: libwampli.Connection) -> None:
-        def on_event(event):
-            return self.on_subscription_event(conn_id, event)
-
-        connection.on(libwampli.SubscriptionEvent, on_event)
+            log.debug("loaded %s for id %s from database", client, conn_id)
+            self._clients[conn_id] = client
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -159,25 +229,8 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         Closes all connections.
         """
         self._subscription_channels.clear()
-        coros = (conn.close() for conn in self._connections.values())
+        coros = (conn.close() for conn in self._clients.values())
         await asyncio.gather(*coros)
-
-    def _remove_connection(self, conn_id: int) -> asyncio.Future:
-        # let the KeyError bubble
-        connection = self._connections.pop(conn_id)
-
-        try:
-            del self._db[str(conn_id)]
-        except KeyError:
-            pass
-
-        try:
-            del self._subscription_channels[conn_id]
-        except KeyError:
-            pass
-
-        loop = asyncio.get_event_loop()
-        return loop.create_task(connection.close())
 
     def _get_db_item(self, conn_id: Union[int, str]) -> DBItem:
         key = str(conn_id)
@@ -204,45 +257,34 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         log.debug("writing to %s", key)
         self._db[key] = item.marshal_json()
 
-    def _switch_connection(self, conn_id: int, new_connection: libwampli.Connection) -> None:
+    async def _switch_client(self, conn_id: int, new_client: LazyClient) -> None:
         try:
-            connection = self._connections[conn_id]
+            client = self._clients[conn_id]
         except KeyError:
             pass
         else:
-            # don't do anything if it's the same connection
-            if connection is new_connection:
+            # don't do anything if it's the same client
+            if client is new_client:
                 return
 
-            loop = asyncio.get_event_loop()
-            loop.create_task(connection.close())
+            await new_client.sub_topics(client.subscriptions)
+            await client.close()
 
-            # noinspection PyProtectedMember
-            # sighs, this should've been better...
-            new_connection._planned_subscriptions = connection._planned_subscriptions
-
-        self._connections[conn_id] = new_connection
+        self._clients[conn_id] = new_client
 
         with self._with_db_writeback(conn_id) as item:
-            item.wamp_config = new_connection.config
+            item.wamp_config = new_client.config
 
-        self.__ready_connection(conn_id, new_connection)
+        log.debug("switched client %s to %s", conn_id, new_client)
 
-        log.debug("switched connection %s to %s", conn_id, new_connection)
-
-    def _cmd_get_connection(self, ctx: commands.Context) -> libwampli.Connection:
+    def _cmd_get_lazy_client(self, ctx: commands.Context) -> LazyClient:
         try:
-            return self._connections[get_conn_id(ctx)]
+            return self._clients[get_conn_id(ctx)]
         except KeyError:
             raise commands.CommandError("Not configured to a router") from None
 
-    def _cmd_get_session(self, ctx: commands.Context) -> wamp.ISession:
-        connection = self._cmd_get_connection(ctx)
-
-        if not connection.connected:
-            raise commands.CommandError("Not in a session, need to connect first!")
-
-        return connection.component_session
+    async def _cmd_get_client(self, ctx: commands.Context) -> aiowamp.ClientABC:
+        return await self._cmd_get_lazy_client(ctx)
 
     @commands.command("status")
     async def status_cmd(self, ctx: commands.Context) -> None:
@@ -250,7 +292,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed()
 
         try:
-            connection = self._connections[get_conn_id(ctx)]
+            connection = self._clients[get_conn_id(ctx)]
         except KeyError:
             embed.title = "Not connected and not configured"
             embed.colour = discord.Colour.orange()
@@ -275,18 +317,20 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         if bool(url) != bool(realm):
             raise commands.UserInputError("if url is specified realm cannot be omitted")
 
+        conn_id = get_conn_id(ctx)
+
         if url:
-            transports = libwampli.get_transports(url)
-            connection = libwampli.Connection(libwampli.ConnectionConfig(realm, transports))
+            client = LazyClient(libwampli.ConnectionConfig(realm, url),
+                                lambda e: self.on_subscription_event(conn_id, e))
         else:
-            connection = self._cmd_get_connection(ctx)
+            client = self._cmd_get_lazy_client(ctx)
 
         try:
-            await connection.open()
+            await client
         except OSError:
             raise commands.CommandError("Couldn't connect") from None
 
-        self._switch_connection(get_conn_id(ctx), connection)
+        await self._switch_client(conn_id, client)
 
         embed = discord.Embed(title="Joined session", colour=discord.Colour.green())
         await ctx.send(embed=embed)
@@ -294,27 +338,30 @@ class WampliusCog(commands.Cog, name="Wamplius"):
     @commands.command("disconnect")
     async def disconnect_cmd(self, ctx: commands.Context) -> None:
         """Disonnect from the router."""
-        connection = self._connections.get(get_conn_id(ctx))
+        client = self._clients.get(get_conn_id(ctx))
 
-        if not (connection and connection.connected):
+        if not (client and client.connected):
             raise commands.CommandError("not connected")
 
-        await connection.close()
+        await client.close()
 
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) -> Any:
-        session = self._cmd_get_session(ctx)
+    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) -> Tuple[
+        aiowamp.InvocationResult, Iterable[str]]:
+        client = await self._cmd_get_client(ctx)
 
         args = await substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
         libwampli.ready_uri(args, aliases=self._get_aliases(get_conn_id(ctx)))
 
         try:
-            return await session.call(*args, **kwargs)
-        except wamp.ApplicationError as e:
-            raise commands.CommandError(e.error_message()) from None
+            result = await client.call(*args, kwargs=kwargs)
+        except aiowamp.Error as e:
+            raise commands.CommandError(str(e)) from None
+
+        return result, args
 
     @commands.command("call", usage="<procedure> [arg]...")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
@@ -325,24 +372,30 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         """
         args = libwampli.split_arg_string(args)
 
-        result = await self.perform_call(ctx, args)
+        result, args = await self.perform_call(ctx, args)
+        res_args, res_kwargs = result.args, result.kwargs
 
-        embed = discord.Embed(description=discord_format(result), colour=discord.Colour.green())
+        embed = discord.Embed(title="Result",
+                              description=libwampli.format_function_style(args),
+                              colour=discord.Colour.green())
+        if res_args:
+            embed.add_field(name="Arguments", value=discord_format(list(res_args)))
+        if res_kwargs:
+            embed.add_field(name="Keyword Arguments", value=discord_format(res_kwargs))
+
         await ctx.send(embed=embed)
 
     async def perform_publish(self, ctx: commands.Context, args: Iterable[str]) -> None:
-        session = self._cmd_get_session(ctx)
+        client = await self._cmd_get_client(ctx)
 
         args = await substitute_variables(ctx, args)
         args, kwargs = libwampli.parse_args(args)
         libwampli.ready_uri(args, aliases=self._get_aliases(get_conn_id(ctx)))
 
-        kwargs["options"] = wamp.PublishOptions(acknowledge=True)
-
         try:
-            await session.publish(*args, **kwargs)
-        except wamp.ApplicationError as e:
-            raise commands.CommandError(e.error_message()) from None
+            await client.publish(*args, kwargs=kwargs, acknowledge=True)
+        except aiowamp.Error as e:
+            raise commands.CommandError(str(e)) from None
 
     @commands.command("publish", usage="<topic> [arg]...")
     async def publish_cmd(self, ctx: commands.Context, *, args: str) -> None:
@@ -361,24 +414,23 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         return value
 
-    async def on_subscription_event(self, conn_id: int,
-                                    event: libwampli.SubscriptionEvent) -> None:
+    async def on_subscription_event(self, conn_id: int, event: aiowamp.SubscriptionEvent) -> None:
         """Handler for events received for subscribed topics."""
         channels = self.__get_channel_map(conn_id)
         try:
-            channel = channels[event.uri]
+            channel = channels[event.subscribed_topic]
         except KeyError:
             log.error(f"Couldn't find text channel for event {event}")
             return
 
-        embed = discord.Embed(title=f"Event {event.uri}",
+        embed = discord.Embed(title=f"Event {event.topic}",
                               colour=discord.Colour.blue())
 
-        args_str = maybe_wrap_yaml(event.format_args())
+        args_str = maybe_wrap_yaml(libwampli.SubscriptionEvent.format_args(event))
         if args_str:
             embed.add_field(name="Arguments", value=args_str, inline=False)
 
-        kwargs_str = maybe_wrap_yaml(event.format_kwargs())
+        kwargs_str = maybe_wrap_yaml(libwampli.SubscriptionEvent.format_kwargs(event))
         if kwargs_str:
             embed.add_field(name="Keyword Arguments", value=kwargs_str, inline=False)
 
@@ -394,18 +446,18 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         You can pass multiple topics to subscribe to.
         """
-        connection = self._cmd_get_connection(ctx)
+        client = self._cmd_get_lazy_client(ctx)
         conn_id = get_conn_id(ctx)
         subscriptions = self.__get_channel_map(conn_id)
 
         subscribed = []
         already_subscribed = []
         for topic in topics:
-            if connection.has_planned_subscription(topic):
+            if topic in client.subscriptions:
                 already_subscribed.append(topic)
                 continue
 
-            await connection.add_subscription(topic)
+            await client.sub(topic)
             subscriptions[topic] = ctx.channel
             subscribed.append(topic)
 
@@ -436,18 +488,18 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         You can also pass multiple topics to unsubscribe from.
         """
-        connection = self._cmd_get_connection(ctx)
+        client = self._cmd_get_lazy_client(ctx)
         conn_id = get_conn_id(ctx)
         subscriptions = self.__get_channel_map(conn_id)
 
         unsubscribed = []
         already_unsubscribed = []
         for topic in topics:
-            if not connection.has_planned_subscription(topic):
+            if topic not in client.subscriptions:
                 already_unsubscribed.append(topic)
                 continue
 
-            await connection.remove_subscription(topic)
+            await client.unsub(topic)
             del subscriptions[topic]
             unsubscribed.append(topic)
 
