@@ -12,8 +12,16 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v1
 
-
       - name: Publish latest image
+        uses: HurricanKai/Publish-Docker-Github-Action@master
+        with:
+          name: gieseladev/wamplius
+          registry: docker.pkg.github.com
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - if: contains(github.ref, "refs/tags/v")
+        name: Publish tagged image
         uses: HurricanKai/Publish-Docker-Github-Action@master
         with:
           name: gieseladev/wamplius
