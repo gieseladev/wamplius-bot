@@ -31,23 +31,16 @@ DB_PATH = pathlib.Path("data/connections/db")
 
 @dataclasses.dataclass()
 class DBItem:
-    """Stored data for a connection id.
-
-    Attributes:
-        wamp_config (Optional[libwampli.ConnectionConfig]): Config for the
-            connection.
-        subscriptions (Dict[str, int]): Subscriptions for the connection.
-            Mapping topic to the channel id.
-
-        aliases (Dict[str, str]): Mapping from alias to URI.
-        macros (Dict[str, Tuple[str, Tuple[str, ...]]]): Macro calls. Mapping
-            from macro name to a tuple containing the action and the arguments.
-    """
+    """Stored data for a connection id."""
     wamp_config: Optional[libwampli.ConnectionConfig]
+    """Config for the connection."""
     subscriptions: Dict[str, int] = dataclasses.field(default_factory=dict)
+    """Subscriptions for the connection. Mapping topic to the channel id."""
 
     aliases: Dict[str, str] = dataclasses.field(default_factory=dict)
+    """Mapping from alias to URI."""
     macros: Dict[str, Tuple[str, Tuple[str, ...]]] = dataclasses.field(default_factory=dict)
+    """Macro calls. Mapping from macro name to a tuple containing the action and the arguments."""
 
     @classmethod
     def unmarshal_json(cls, data: str):
@@ -202,7 +195,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             if not config:
                 continue
 
-            client = LazyClient(config, self.on_subscription_event)
+            client = LazyClient(config, lambda e: self.on_subscription_event(conn_id, e))
             client.subscriptions = set(item.subscriptions.keys())
 
             log.debug("loaded %s for id %s from database", client, conn_id)
@@ -324,8 +317,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         if bool(url) != bool(realm):
             raise commands.UserInputError("if url is specified realm cannot be omitted")
 
+        conn_id = get_conn_id(ctx)
+
         if url:
-            client = LazyClient(libwampli.ConnectionConfig(realm, url), self.on_subscription_event)
+            client = LazyClient(libwampli.ConnectionConfig(realm, url),
+                                lambda e: self.on_subscription_event(conn_id, e))
         else:
             client = self._cmd_get_lazy_client(ctx)
 
@@ -334,7 +330,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         except OSError:
             raise commands.CommandError("Couldn't connect") from None
 
-        await self._switch_client(get_conn_id(ctx), client)
+        await self._switch_client(conn_id, client)
 
         embed = discord.Embed(title="Joined session", colour=discord.Colour.green())
         await ctx.send(embed=embed)
@@ -352,7 +348,8 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) -> Any:
+    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) -> Tuple[
+        aiowamp.InvocationResult, Iterable[str]]:
         client = await self._cmd_get_client(ctx)
 
         args = await substitute_variables(ctx, args)
@@ -360,9 +357,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         libwampli.ready_uri(args, aliases=self._get_aliases(get_conn_id(ctx)))
 
         try:
-            return await client.call(*args, kwargs=kwargs)
+            result = await client.call(*args, kwargs=kwargs)
         except aiowamp.Error as e:
             raise commands.CommandError(str(e)) from None
+
+        return result, args
 
     @commands.command("call", usage="<procedure> [arg]...")
     async def call_cmd(self, ctx: commands.Context, *, args: str) -> None:
@@ -373,9 +372,17 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         """
         args = libwampli.split_arg_string(args)
 
-        result = await self.perform_call(ctx, args)
+        result, args = await self.perform_call(ctx, args)
+        res_args, res_kwargs = result.args, result.kwargs
 
-        embed = discord.Embed(description=discord_format(result), colour=discord.Colour.green())
+        embed = discord.Embed(title="Result",
+                              description=libwampli.format_function_style(args),
+                              colour=discord.Colour.green())
+        if res_args:
+            embed.add_field(name="Arguments", value=discord_format(list(res_args)))
+        if res_kwargs:
+            embed.add_field(name="Keyword Arguments", value=discord_format(res_kwargs))
+
         await ctx.send(embed=embed)
 
     async def perform_publish(self, ctx: commands.Context, args: Iterable[str]) -> None:
@@ -407,25 +414,23 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         return value
 
-    # FIXME: needs new version of aiowamp
-    async def on_subscription_event(self, conn_id: int,
-                                    event: libwampli.SubscriptionEvent) -> None:
+    async def on_subscription_event(self, conn_id: int, event: aiowamp.SubscriptionEvent) -> None:
         """Handler for events received for subscribed topics."""
         channels = self.__get_channel_map(conn_id)
         try:
-            channel = channels[event.uri]
+            channel = channels[event.subscribed_topic]
         except KeyError:
             log.error(f"Couldn't find text channel for event {event}")
             return
 
-        embed = discord.Embed(title=f"Event {event.uri}",
+        embed = discord.Embed(title=f"Event {event.topic}",
                               colour=discord.Colour.blue())
 
-        args_str = maybe_wrap_yaml(event.format_args())
+        args_str = maybe_wrap_yaml(libwampli.SubscriptionEvent.format_args(event))
         if args_str:
             embed.add_field(name="Arguments", value=args_str, inline=False)
 
-        kwargs_str = maybe_wrap_yaml(event.format_kwargs())
+        kwargs_str = maybe_wrap_yaml(libwampli.SubscriptionEvent.format_kwargs(event))
         if kwargs_str:
             embed.add_field(name="Keyword Arguments", value=kwargs_str, inline=False)
 
