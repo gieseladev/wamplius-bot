@@ -13,6 +13,3 @@ pyyaml = "*"
 wampli = "*"
 colorlog = "*"
 aiowamp = "*"
-
-[requires]
-python_version = "3.7"

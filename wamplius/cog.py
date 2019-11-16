@@ -348,8 +348,8 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title="disconnected", colour=discord.Colour.green())
         await ctx.send(embed=embed)
 
-    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) -> Tuple[
-        aiowamp.InvocationResult, Iterable[str]]:
+    async def perform_call(self, ctx: commands.Context, args: Iterable[str]) \
+            -> Tuple[aiowamp.InvocationResult, Iterable[str]]:
         client = await self._cmd_get_client(ctx)
 
         args = await substitute_variables(ctx, args)
@@ -426,11 +426,11 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed = discord.Embed(title=f"Event {event.topic}",
                               colour=discord.Colour.blue())
 
-        args_str = maybe_wrap_yaml(libwampli.SubscriptionEvent.format_args(event))
+        args_str = maybe_wrap_yaml(libwampli.format_args(event.args))
         if args_str:
             embed.add_field(name="Arguments", value=args_str, inline=False)
 
-        kwargs_str = maybe_wrap_yaml(libwampli.SubscriptionEvent.format_kwargs(event))
+        kwargs_str = maybe_wrap_yaml(libwampli.format_kwargs(event.kwargs))
         if kwargs_str:
             embed.add_field(name="Keyword Arguments", value=kwargs_str, inline=False)
 
