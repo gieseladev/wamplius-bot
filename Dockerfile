@@ -12,7 +12,7 @@ RUN pipenv install --deploy --system
 
 
 FROM python:3.7-slim
-LABEL version="0.4.0"
+LABEL version="0.4.1"
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
