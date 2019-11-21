@@ -12,8 +12,7 @@ jobs:
       - name: Publish latest image
         uses: elgohr/Publish-Docker-Github-Action@master
         with:
-          name: ${{ github.repository }}/wamplius
-          registry: docker.pkg.github.com
+          name: gieseladev/wamplius
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
@@ -21,8 +20,7 @@ jobs:
         name: Publish tagged image
         uses: elgohr/Publish-Docker-Github-Action@master
         with:
-          name: ${{ github.repository }}/wamplius
-          registry: docker.pkg.github.com
+          name: gieseladev/wamplius
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           tag_names: "true"
