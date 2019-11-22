@@ -358,7 +358,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         try:
             result = await client.call(*args, kwargs=kwargs)
-        except aiowamp.Error as e:
+        except aiowamp.BaseError as e:
             raise commands.CommandError(str(e)) from None
 
         return result, args
@@ -394,7 +394,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
 
         try:
             await client.publish(*args, kwargs=kwargs, acknowledge=True)
-        except aiowamp.Error as e:
+        except aiowamp.BaseError as e:
             raise commands.CommandError(str(e)) from None
 
     @commands.command("publish", usage="<topic> [arg]...")
