@@ -14,13 +14,6 @@
         ]
     },
     "default": {
-        "aiobservable": {
-            "hashes": [
-                "sha256:00a282a90e918d5b57e88cbe97a3f8d5ae7847ac86d7e23135953bf464739171",
-                "sha256:b42ad82b1e631362750f1c518c19b215ac34141e01c06c3510d3eef9236b8bd2"
-            ],
-            "version": "==0.2.2"
-        },
         "aiohttp": {
             "hashes": [
                 "sha256:00d198585474299c9c3b4f1d5de1a576cc230d562abc5e4a0e81d71a20a6ca55",
@@ -207,11 +200,11 @@
         },
         "wampli": {
             "hashes": [
-                "sha256:300a62f122bd94c38a9376dfc6c7be44fd9d1d89908af7fdd5fd92c77f64700d",
-                "sha256:eed2f8256f0ff8322b6e50d87903be2de84299c4c6890730cfd5adf115e154c2"
+                "sha256:6fb8e33de0d0e7eeec098ed702ff336ff45976bc0f52fec91224530b11d270a5",
+                "sha256:fdb48dde14b6a3a4e3964dd2e1aca15243e9c1816ab3d601000a05492fff1d60"
             ],
             "index": "pypi",
-            "version": "==0.2.0"
+            "version": "==0.3.0"
         },
         "websockets": {
             "hashes": [

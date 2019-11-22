@@ -141,7 +141,7 @@ class LazyClient(Awaitable[aiowamp.ClientABC]):
 
         client = self.client
         if client:
-            await client.subscribe(topic, self.__on_event)
+            await client.subscribe(libwampli.parse_uri(topic), self.__on_event)
 
         self.subscriptions.add(topic)
 
