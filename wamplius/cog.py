@@ -116,7 +116,7 @@ class LazyClient(Awaitable[aiowamp.ClientABC]):
         config = self.config
         client = await aiowamp.connect(config.endpoint, realm=config.realm)
 
-        await asyncio.gather(*(client.subscribe(topic, self.__on_event)
+        await asyncio.gather(*(client.subscribe(libwampli.parse_uri(topic), self.__on_event)
                                for topic in self.subscriptions))
 
         return client
@@ -215,7 +215,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             for topic, channel_id in item.subscriptions.items():
                 channel = self.bot.get_channel(channel_id)
                 if channel:
-                    subscriptions[topic] = channel
+                    subscriptions[libwampli.parse_uri(topic)] = channel
                 else:
                     log.warning(f"couldn't find channel {channel_id}")
 
@@ -302,8 +302,8 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             embed.title = "Connected" if connection.connected else "Configured"
             embed.colour = discord.Colour.blue() if connection.connected else discord.Colour.gold()
 
-            embed.add_field(name="endpoint", value=config.endpoint)
-            embed.add_field(name="realm", value=config.realm)
+            embed.add_field(name="endpoint", value=escape_dis(config.endpoint))
+            embed.add_field(name="realm", value=escape_dis(config.realm))
 
         await ctx.send(embed=embed)
 
@@ -420,7 +420,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         try:
             channel = channels[event.subscribed_topic]
         except KeyError:
-            log.error(f"Couldn't find text channel for event {event}")
+            log.error(f"Couldn't find text channel for event {event} ({event.subscribed_topic})")
             return
 
         embed = discord.Embed(title=f"Event {event.topic}",
@@ -458,7 +458,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
                 continue
 
             await client.sub(topic)
-            subscriptions[topic] = ctx.channel
+            subscriptions[libwampli.parse_uri(topic)] = ctx.channel
             subscribed.append(topic)
 
         self.__update_db_subscriptions(conn_id, subscriptions)
@@ -468,16 +468,16 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             embed.title = "Already subscribed to all topics"
         elif not already_subscribed:
             if len(subscribed) == 1:
-                embed.title = f"Subscribed to {topics[0]}"
+                embed.title = f"Subscribed to {escape_dis(topics[0])}"
             else:
                 embed.title = "Subscribed to all topics"
         else:
             embed.title = "Subscribed to some topics"
             embed.add_field(name="Subscribed",
-                            value="\n".join(subscribed),
+                            value="\n".join(map(escape_dis, subscribed)),
                             inline=False)
             embed.add_field(name="Already subscribed",
-                            value="\n".join(already_subscribed),
+                            value="\n".join(map(escape_dis, already_subscribed)),
                             inline=False)
 
         await ctx.send(embed=embed)
@@ -500,7 +500,7 @@ class WampliusCog(commands.Cog, name="Wamplius"):
                 continue
 
             await client.unsub(topic)
-            del subscriptions[topic]
+            del subscriptions[libwampli.parse_uri(topic)]
             unsubscribed.append(topic)
 
         self.__update_db_subscriptions(conn_id, subscriptions)
@@ -510,16 +510,16 @@ class WampliusCog(commands.Cog, name="Wamplius"):
             embed.title = "Not subscribed to any topic"
         elif not already_unsubscribed:
             if len(unsubscribed) == 1:
-                embed.title = f"Unsubscribed from {topics[0]}"
+                embed.title = f"Unsubscribed from {escape_dis(topics[0])}"
             else:
                 embed.title = "Unsubscribed from all topics"
         else:
             embed.title = "Unsubscribed from some topics"
             embed.add_field(name="Unsubscribed",
-                            value="\n".join(unsubscribed),
+                            value="\n".join(map(escape_dis, unsubscribed)),
                             inline=False)
             embed.add_field(name="Not subscribed",
-                            value="\n".join(already_unsubscribed),
+                            value="\n".join(map(escape_dis, already_unsubscribed)),
                             inline=False)
 
         await ctx.send(embed=embed)
@@ -539,11 +539,12 @@ class WampliusCog(commands.Cog, name="Wamplius"):
         embed.title = "Subscriptions"
 
         by_channel = {}
-        for topic, channel in subscriptions.items():
+        for topic in self._cmd_get_lazy_client(ctx).subscriptions:
+            channel = subscriptions[libwampli.parse_uri(topic)]
             by_channel.setdefault(channel, []).append(topic)
 
         for channel, topics in by_channel.items():
-            topics_str = "\n".join(f"- {topic}" for topic in topics)
+            topics_str = "\n".join(f"- {escape_dis(topic)}" for topic in topics)
             embed.add_field(name=f"#{channel.name}", value=topics_str, inline=False)
 
         await ctx.send(embed=embed)
@@ -734,7 +735,7 @@ def maybe_wrap_yaml(s: str) -> str:
     if s.count("\n") > 1:
         return wrap_yaml(s)
     else:
-        return s
+        return escape_dis(s)
 
 
 K = TypeVar("K")
@@ -824,3 +825,10 @@ async def substitute_variable(ctx: commands.Context, arg: str) -> str:
 async def substitute_variables(ctx: commands.Context, args: Iterable[str]) -> List[str]:
     """Substitute the variables / mentions and perform conversions."""
     return await asyncio.gather(*(substitute_variable(ctx, arg) for arg in args))
+
+
+DISCORD_SPECIAL_CHARS = re.compile(r"[*_`~]")
+
+
+def escape_dis(s: str) -> str:
+    return DISCORD_SPECIAL_CHARS.sub(r"\\\g<0>", s)
