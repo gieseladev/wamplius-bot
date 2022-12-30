@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v1
 
       - name: Publish latest image
-        uses: elgohr/Publish-Docker-Github-Action@master
+        uses: elgohr/Publish-Docker-Github-Action@v5
         with:
           name: gieseladev/wamplius
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -18,7 +18,7 @@ jobs:
 
       - if: contains(github.ref, 'refs/tags/v')
         name: Publish tagged image
-        uses: elgohr/Publish-Docker-Github-Action@master
+        uses: elgohr/Publish-Docker-Github-Action@v5
         with:
           name: gieseladev/wamplius
           username: ${{ secrets.DOCKER_USERNAME }}
